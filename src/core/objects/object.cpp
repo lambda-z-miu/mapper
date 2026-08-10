@@ -286,9 +286,23 @@ void Object::save(QXmlStreamWriter& xml) const
 	if (type == Path)
 	{
 		auto const* path = static_cast<PathObject const*>(this);
-		XmlElementWriter pattern_element(xml, literal::pattern);
-		pattern_element.writeAttribute(literal::rotation, path->getPatternRotation());
-		path->getPatternOrigin().save(xml);
+		{
+			XmlElementWriter pattern_element(xml, literal::pattern);
+			pattern_element.writeAttribute(literal::rotation, path->getPatternRotation());
+			path->getPatternOrigin().save(xml);
+		}
+		if (path->hasFittedPath())
+		{
+			XmlElementWriter fitted_path_element(xml, QLatin1String("fitted-path"));
+			for (const auto& anchor : path->getFittedPathAnchors())
+			{
+				XmlElementWriter anchor_element(xml, QLatin1String("anchor"));
+				anchor_element.writeAttribute(QLatin1String("x"), anchor.coord.nativeX());
+				anchor_element.writeAttribute(QLatin1String("y"), anchor.coord.nativeY());
+				if (anchor.hard_corner)
+					anchor_element.writeAttribute(QLatin1String("hard-corner"), true);
+			}
+		}
 	}
 	else if (type == Text)
 	{
@@ -421,6 +435,28 @@ Object* Object::load(QXmlStreamReader& xml, Map* map, const SymbolDictionary& sy
 				}
 			}
 		}
+		else if (xml.name() == QLatin1String("fitted-path") && object_type == Path)
+		{
+			auto* path = static_cast<PathObject*>(object);
+			PathObject::FittedPathAnchors anchors;
+			while (xml.readNextStartElement())
+			{
+				if (xml.name() == QLatin1String("anchor"))
+				{
+					XmlElementReader anchor_element(xml);
+					auto const x = anchor_element.attribute<qint64>(QLatin1String("x"));
+					auto const y = anchor_element.attribute<qint64>(QLatin1String("y"));
+					anchors.push_back({ MapCoord::fromNative64withOffset(x, y),
+					                    anchor_element.attribute<bool>(QLatin1String("hard-corner")) });
+				}
+				else
+				{
+					xml.skipCurrentElement();
+				}
+			}
+			if (anchors.size() >= 2)
+				path->setFittedPathAnchors(std::move(anchors));
+		}
 		else if (xml.name() == literal::text && object_type == Text)
 		{
 			auto* text = static_cast<TextObject*>(object);
@@ -528,6 +564,8 @@ void Object::move(qint32 dx, qint32 dy)
 		coord.setNativeX(dx + coord.nativeX());
 		coord.setNativeY(dy + coord.nativeY());
 	}
+	if (type == Path)
+		static_cast<PathObject*>(this)->syncFittedPathAnchors();
 	
 	setOutputDirty();
 }
@@ -538,6 +576,8 @@ void Object::move(const MapCoord& offset)
 	{
 		coord += offset;
 	}
+	if (type == Path)
+		static_cast<PathObject*>(this)->syncFittedPathAnchors();
 	
 	setOutputDirty();
 }
@@ -549,6 +589,8 @@ void Object::scale(const MapCoordF& center, double factor)
 		coord.setX(center.x() + (coord.x() - center.x()) * factor);
 		coord.setY(center.y() + (coord.y() - center.y()) * factor);
 	}
+	if (type == Path)
+		static_cast<PathObject*>(this)->syncFittedPathAnchors();
 	
 	setOutputDirty();
 }
@@ -560,6 +602,8 @@ void Object::scale(double factor_x, double factor_y)
 		coord.setX(coord.x() * factor_x);
 		coord.setY(coord.y() * factor_y);
 	}
+	if (type == Path)
+		static_cast<PathObject*>(this)->syncFittedPathAnchors();
 	
 	setOutputDirty();
 }
@@ -581,6 +625,8 @@ void Object::rotateAround(const MapCoordF& center, qreal angle)
 		coord.setX(center.x() + cos_angle * center_to_coord.x() + sin_angle * center_to_coord.y());
 		coord.setY(center.y() - sin_angle * center_to_coord.x() + cos_angle * center_to_coord.y());
 	}
+	if (type == Path)
+		static_cast<PathObject*>(this)->syncFittedPathAnchors();
 	
 	if (symbol->hasRotatableFillPattern())
 	{
@@ -605,6 +651,8 @@ void Object::rotate(qreal angle)
 		coord.setX(+ cos_angle * old_coord.x() + sin_angle * old_coord.y());
 		coord.setY(- sin_angle * old_coord.x() + cos_angle * old_coord.y());
 	}
+	if (type == Path)
+		static_cast<PathObject*>(this)->syncFittedPathAnchors();
 	
 	if (symbol->hasRotatableFillPattern())
 	{
@@ -927,6 +975,7 @@ PathObject::PathObject(const Symbol* symbol, const PathObject& proto, MapCoordVe
 PathObject::PathObject(const PathObject& proto)
 : Object(proto)
 , pattern_origin(proto.pattern_origin)
+, fitted_path_anchors(proto.fitted_path_anchors)
 {
 	path_parts.reserve(proto.path_parts.size());
 	for (const PathPart& part : proto.path_parts)
@@ -961,6 +1010,7 @@ void PathObject::copyFrom(const Object& other)
 	
 	const PathObject& other_path = *other.asPath();
 	pattern_origin = other_path.getPatternOrigin();
+	fitted_path_anchors = other_path.fitted_path_anchors;
 	
 	path_parts.clear();
 	path_parts.reserve(other_path.path_parts.size());
@@ -1122,6 +1172,7 @@ void PathObject::transform(const QTransform& t)
 		coord.setX(p.x());
 		coord.setY(p.y());
 	}
+	syncFittedPathAnchors();
 	pattern_origin = MapCoord{t.map(MapCoordF{getPatternOrigin()})};
 	setOutputDirty();
 }
@@ -2090,7 +2141,12 @@ void PathObject::reverse()
 {
 	for (auto& part : path_parts)
 		part.reverse();
-		
+	if (hasFittedPath())
+	{
+		std::reverse(fitted_path_anchors.begin(), fitted_path_anchors.end());
+		syncFittedPathAnchors();
+	}
+
 	Q_ASSERT(isOutputDirty());
 }
 
@@ -2864,10 +2920,140 @@ void PathObject::calcAllIntersectionsWith(const PathObject* other, PathObject::I
 	}
 }
 
+PathObject::FittedPathAnchors::size_type PathObject::fittedAnchorIndex(MapCoordVector::size_type coord_index) const
+{
+	if (fitted_path_anchors.size() == 2 && coord_index < 2)
+		return FittedPathAnchors::size_type(coord_index);
+	if (coord_index % 3 == 0)
+	{
+		auto const index = FittedPathAnchors::size_type(coord_index / 3);
+		if (index < fitted_path_anchors.size())
+			return index;
+	}
+	return fitted_path_anchors.size();
+}
+
+
+void PathObject::setFittedPathAnchors(FittedPathAnchors anchors)
+{
+	if (anchors.size() < 2)
+	{
+		fitted_path_anchors.clear();
+		return;
+	}
+
+	for (auto& anchor : anchors)
+		anchor.coord.setFlags(0);
+	anchors.front().hard_corner = false;
+	anchors.back().hard_corner = false;
+	fitted_path_anchors = std::move(anchors);
+	rebuildFittedPath();
+}
+
+
+void PathObject::clearFittedPath()
+{
+	fitted_path_anchors.clear();
+}
+
+
+void PathObject::syncFittedPathAnchors()
+{
+	if (fitted_path_anchors.size() < 2)
+		return;
+	if (fitted_path_anchors.size() == 2)
+	{
+		if (coords.size() != 2)
+			return;
+		for (auto index = FittedPathAnchors::size_type(0); index < 2; ++index)
+		{
+			auto coord = coords[index];
+			coord.setFlags(0);
+			fitted_path_anchors[index].coord = coord;
+		}
+		return;
+	}
+	if (coords.size() != 3 * fitted_path_anchors.size() - 2)
+		return;
+	for (auto index = FittedPathAnchors::size_type(0); index < fitted_path_anchors.size(); ++index)
+	{
+		auto coord = coords[3 * index];
+		coord.setFlags(0);
+		fitted_path_anchors[index].coord = coord;
+	}
+}
+
+
+void PathObject::rebuildFittedPath()
+{
+	Q_ASSERT(fitted_path_anchors.size() >= 2);
+
+	coords.clear();
+	coords.reserve(3 * fitted_path_anchors.size() - 2);
+	coords.push_back(fitted_path_anchors.front().coord);
+
+	if (fitted_path_anchors.size() == 2)
+	{
+		coords.push_back(fitted_path_anchors.back().coord);
+	}
+	else
+	{
+		auto const anchor = [this](FittedPathAnchors::size_type index) {
+			return fitted_path_anchors[index].coord;
+		};
+		auto const outgoing_handle = [&anchor, this](FittedPathAnchors::size_type index) {
+			auto const current = anchor(index);
+			auto const next = anchor(index + 1);
+			if (index == 0 || fitted_path_anchors[index].hard_corner)
+				return MapCoord(current.x() + (next.x() - current.x()) / 3.0,
+				                current.y() + (next.y() - current.y()) / 3.0);
+			auto const previous = anchor(index - 1);
+			return MapCoord(current.x() + (next.x() - previous.x()) / 6.0,
+			                current.y() + (next.y() - previous.y()) / 6.0);
+		};
+		auto const incoming_handle = [&anchor, this](FittedPathAnchors::size_type index) {
+			auto const previous = anchor(index - 1);
+			auto const current = anchor(index);
+			if (index + 1 == fitted_path_anchors.size() || fitted_path_anchors[index].hard_corner)
+				return MapCoord(current.x() - (current.x() - previous.x()) / 3.0,
+				                current.y() - (current.y() - previous.y()) / 3.0);
+			auto const next = anchor(index + 1);
+			return MapCoord(current.x() - (next.x() - previous.x()) / 6.0,
+			                current.y() - (next.y() - previous.y()) / 6.0);
+		};
+
+		for (auto index = FittedPathAnchors::size_type(0); index + 1 < fitted_path_anchors.size(); ++index)
+		{
+			coords.back().setCurveStart(true);
+			coords.push_back(outgoing_handle(index));
+			coords.push_back(incoming_handle(index + 1));
+			coords.push_back(anchor(index + 1));
+		}
+	}
+
+	recalculateParts();
+}
+
+
 void PathObject::setCoordinate(MapCoordVector::size_type pos, const MapCoord& c)
 {
 	Q_ASSERT(pos < getCoordinateCount());
 	
+	if (hasFittedPath())
+	{
+		auto const anchor_index = fittedAnchorIndex(pos);
+		if (anchor_index < fitted_path_anchors.size())
+		{
+			auto coord = c;
+			coord.setFlags(0);
+			fitted_path_anchors[anchor_index].coord = coord;
+			rebuildFittedPath();
+			return;
+		}
+		// Editing an automatically generated handle turns this into an ordinary Bezier path.
+		clearFittedPath();
+	}
+
 	const PathPart& part = *findPartForIndex(pos);
 	if (part.isClosed() && pos == part.last_index)
 		pos = part.first_index;
@@ -2880,6 +3066,7 @@ void PathObject::setCoordinate(MapCoordVector::size_type pos, const MapCoord& c)
 
 void PathObject::addCoordinate(MapCoordVector::size_type pos, const MapCoord& c)
 {
+	clearFittedPath();
 	Q_ASSERT(pos <= coords.size());
 	
 	if (coords.empty())
@@ -2912,6 +3099,7 @@ void PathObject::addCoordinate(MapCoordVector::size_type pos, const MapCoord& c)
 
 void PathObject::addCoordinate(const MapCoord& c, bool start_new_part)
 {
+	clearFittedPath();
 	if (coords.empty())
 	{
 		addCoordinate(0, c);
@@ -2931,6 +3119,7 @@ void PathObject::addCoordinate(const MapCoord& c, bool start_new_part)
 
 void PathObject::deleteCoordinate(MapCoordVector::size_type pos, bool adjust_other_coords, int delete_bezier_point_action)
 {
+	clearFittedPath();
 	const auto part = findPartForIndex(pos);
 	const auto coords_begin = begin(coords);
 	
@@ -3070,6 +3259,7 @@ void PathObject::prepareDeleteBezierPoint(MapCoordVector::size_type pos, int del
 
 void PathObject::clearCoordinates()
 {
+	clearFittedPath();
 	coords.clear();
 	path_parts.clear();
 	setOutputDirty();
@@ -3077,6 +3267,7 @@ void PathObject::clearCoordinates()
 
 void PathObject::assignCoordinates(const PathObject& proto, MapCoordVector::size_type first, MapCoordVector::size_type last)
 {
+	clearFittedPath();
 	Q_ASSERT(last < proto.coords.size());
 	
 	auto part = proto.findPartForIndex(first);

@@ -21,6 +21,9 @@
 #include "path_object_t.h"
 
 #include <QtTest>
+#include <QBuffer>
+#include <QXmlStreamReader>
+#include <QXmlStreamWriter>
 
 #include "core/map.h"
 #include "core/objects/object.h"
@@ -1149,6 +1152,71 @@ void PathObjectTest::atypicalPathTest()
 	}
 }
 
+
+
+void PathObjectTest::fittedPathTest()
+{
+	PathObject path{Map::getCoveringRedLine()};
+	PathObject::FittedPathAnchors anchors{
+		{ MapCoord{ 0.0, 0.0 }, false },
+		{ MapCoord{ 10.0, 10.0 }, true },
+		{ MapCoord{ 20.0, 0.0 }, false },
+	};
+	path.setFittedPathAnchors(anchors);
+
+	QVERIFY(path.hasFittedPath());
+	QCOMPARE(path.getCoordinateCount(), MapCoordVector::size_type(7));
+	QVERIFY(path.getCoordinate(0).isCurveStart());
+	QVERIFY(path.getCoordinate(3).isCurveStart());
+	QVERIFY(equalXY(path.getCoordinate(3), MapCoord{ 10.0, 10.0 }));
+	QVERIFY(path.getFittedPathAnchors()[1].hard_corner);
+
+	// The incoming and outgoing handles of a hard corner use distinct tangents.
+	auto const before = path.getCoordinate(2);
+	auto const corner = path.getCoordinate(3);
+	auto const after = path.getCoordinate(4);
+	auto const incoming_x = corner.x() - before.x();
+	auto const incoming_y = corner.y() - before.y();
+	auto const outgoing_x = after.x() - corner.x();
+	auto const outgoing_y = after.y() - corner.y();
+	QVERIFY(incoming_x * outgoing_y != incoming_y * outgoing_x);
+
+	// Moving a fitted anchor keeps the fitted representation and rebuilds the handles.
+	path.setCoordinate(3, MapCoord{ 12.0, 8.0 });
+	QVERIFY(path.hasFittedPath());
+	QVERIFY(equalXY(path.getCoordinate(3), MapCoord{ 12.0, 8.0 }));
+	QVERIFY(equalXY(path.getFittedPathAnchors()[1].coord, MapCoord{ 12.0, 8.0 }));
+	QVERIFY(path.getFittedPathAnchors()[1].hard_corner);
+
+	path.move(MapCoord{ 1.0, 2.0 });
+	QVERIFY(equalXY(path.getFittedPathAnchors()[1].coord, MapCoord{ 13.0, 10.0 }));
+
+	QByteArray xml_data;
+	{
+		QBuffer buffer(&xml_data);
+		QVERIFY(buffer.open(QIODevice::WriteOnly));
+		QXmlStreamWriter writer(&buffer);
+		path.save(writer);
+	}
+	QVERIFY(xml_data.contains("<fitted-path>"));
+	QXmlStreamReader reader(xml_data);
+	QVERIFY(reader.readNextStartElement());
+	SymbolDictionary symbol_dict;
+	auto* loaded = Object::load(reader, nullptr, symbol_dict, Map::getCoveringRedLine());
+	QVERIFY(loaded->asPath()->hasFittedPath());
+	QCOMPARE(loaded->asPath()->getFittedPathAnchors().size(), std::size_t(3));
+	QVERIFY(equalXY(loaded->asPath()->getFittedPathAnchors()[1].coord, MapCoord{ 13.0, 10.0 }));
+	QVERIFY(loaded->asPath()->getFittedPathAnchors()[1].hard_corner);
+	delete loaded;
+
+	PathObject straight{Map::getCoveringRedLine()};
+	straight.setFittedPathAnchors({
+		{ MapCoord{ 0.0, 0.0 }, false },
+		{ MapCoord{ 20.0, 0.0 }, false },
+	});
+	QVERIFY(straight.hasFittedPath());
+	QCOMPARE(straight.getCoordinateCount(), MapCoordVector::size_type(2));
+}
 
 
 void PathObjectTest::recalculatePartsTest_data()

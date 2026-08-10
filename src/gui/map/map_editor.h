@@ -204,6 +204,8 @@ public:
 	inline Map* getMap() const {return map;}
 	/** Returns the main map widget (which is currently the only map widget). */
 	inline MapWidget* getMainWidget() const {return map_widget;}
+	/** Returns the drawing toolbar used for tool-specific actions. */
+	inline QToolBar* getDrawingToolBar() const {return toolbar_drawing;}
 	/** Returns this controller's symbol widget, where the symbol selection happens. */
 	inline SymbolWidget* getSymbolWidget() const {return symbol_widget;}
 	

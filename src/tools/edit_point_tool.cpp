@@ -36,8 +36,11 @@
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPen>
 #include <QPoint>
 #include <QPointF>
+#include <QRectF>
+#include <QSizeF>
 #include <QToolButton>
 
 #include "settings.h"
@@ -623,6 +626,24 @@ void EditPointTool::drawImpl(QPainter* painter, MapWidget* widget)
 					auto active = hover_state.testFlag(OverObjectNode) && hover_object == object;
 					auto hover_point = active ? this->hover_point : no_point;
 					pointHandles().draw(painter, widget, object, hover_point, true, PointHandles::NormalHandleState);
+					if (object->getType() == Object::Path && object->asPath()->hasFittedPath())
+					{
+						painter->save();
+						painter->setRenderHint(QPainter::Antialiasing);
+						for (const auto& anchor : object->asPath()->getFittedPathAnchors())
+						{
+							auto const point = widget->mapToViewport(MapCoordF(anchor.coord));
+							QPen pen(anchor.hard_corner ? QColor(220, 80, 30) : QColor(20, 150, 220));
+							pen.setWidth(2);
+							painter->setPen(pen);
+							painter->setBrush(QColor(255, 255, 255));
+							if (anchor.hard_corner)
+								painter->drawRect(QRectF(point, QSizeF(10, 10)).translated(-5, -5));
+							else
+								painter->drawEllipse(point, 5, 5);
+						}
+						painter->restore();
+					}
 				}
 			}
 		}

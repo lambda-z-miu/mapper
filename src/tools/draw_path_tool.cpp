@@ -27,6 +27,7 @@
 
 #include <Qt>
 #include <QtMath>
+#include <QAction>
 #include <QColor>
 #include <QCursor>
 #include <QFlags>
@@ -43,6 +44,7 @@
 #include <QRgb>
 #include <QSizeF>
 #include <QString>
+#include <QToolBar>
 #include <QToolButton>
 #include <QVarLengthArray>
 
@@ -88,10 +90,34 @@ DrawPathTool::~DrawPathTool()
 {
 	if (key_button_bar)
 		editor->deletePopupWidget(key_button_bar);
+	if (auto* toolbar = editor->getDrawingToolBar())
+	{
+		if (fit_mode_action)
+			toolbar->removeAction(fit_mode_action);
+		if (hard_corner_action)
+			toolbar->removeAction(hard_corner_action);
+	}
 }
 
 void DrawPathTool::init()
 {
+	if (!is_helper_tool && !fit_mode_action)
+	{
+		if (auto* toolbar = editor->getDrawingToolBar())
+		{
+			fit_mode_action = new QAction(tr("Multi-point fit"), this);
+			fit_mode_action->setCheckable(true);
+			fit_mode_action->setToolTip(tr("Draw a smooth curve through multiple points"));
+			connect(fit_mode_action, &QAction::toggled, this, &DrawPathTool::setFitMode);
+			toolbar->addAction(fit_mode_action);
+
+			hard_corner_action = new QAction(tr("Toggle last corner"), this);
+			hard_corner_action->setToolTip(tr("Toggle the most recent point as a hard corner"));
+			connect(hard_corner_action, &QAction::triggered, this, &DrawPathTool::toggleLastFitCorner);
+			toolbar->addAction(hard_corner_action);
+		}
+	}
+	updateFitActions();
 	updateDashPointDrawing();
 	updateStatusText();
 	
@@ -123,11 +149,168 @@ const QCursor& DrawPathTool::getCursor() const
 	return cursor;
 }
 
+
+bool DrawPathTool::fitModeSupported() const
+{
+	if (is_helper_tool || !drawing_symbol)
+		return false;
+	if (drawing_symbol->getType() == Symbol::Line)
+		return true;
+	if (drawing_symbol->getType() != Symbol::Combined)
+		return false;
+	auto const contained_types = drawing_symbol->getContainedTypes();
+	return (contained_types & Symbol::Line) && !(contained_types & Symbol::Area);
+}
+
+
+bool DrawPathTool::fitModeActive() const
+{
+	return fit_mode && fitModeSupported();
+}
+
+
+void DrawPathTool::setFitMode(bool enabled)
+{
+	if (editingInProgress())
+	{
+		if (fit_mode_action)
+			fit_mode_action->setChecked(fit_mode);
+		return;
+	}
+	fit_mode = enabled && fitModeSupported();
+	if (fit_mode_action && fit_mode_action->isChecked() != fit_mode)
+		fit_mode_action->setChecked(fit_mode);
+	updateFitActions();
+	updateStatusText();
+}
+
+
+void DrawPathTool::toggleLastFitCorner()
+{
+	if (!fitModeActive() || !editingInProgress() || fit_anchors.size() < 2)
+		return;
+	fit_anchors.back().hard_corner = !fit_anchors.back().hard_corner;
+	fit_edits.push_back({ FitEdit::ToggleCorner, fit_anchors.size() - 1 });
+	updateFitPreview(false);
+}
+
+
+void DrawPathTool::updateFitPreview(bool add_hover_point)
+{
+	if (!preview_path || fit_anchors.empty())
+		return;
+
+	PathObject::FittedPathAnchors anchors;
+	anchors.reserve(fit_anchors.size() + (add_hover_point ? 1 : 0));
+	for (const auto& anchor : fit_anchors)
+		anchors.push_back({ anchor.coord, anchor.hard_corner });
+	if (add_hover_point)
+	{
+		MapCoord hover_coord(constrained_pos_map);
+		if (!anchors.back().coord.isPositionEqualTo(hover_coord))
+			anchors.push_back({ hover_coord, false });
+	}
+
+	if (anchors.size() == 1)
+	{
+		preview_path->clearCoordinates();
+		preview_path->addCoordinate(anchors.front().coord);
+	}
+	else
+	{
+		preview_path->setFittedPathAnchors(std::move(anchors));
+	}
+	updatePreviewPath();
+	updateFitActions();
+	updateDirtyRect();
+}
+
+
+void DrawPathTool::undoLastFitEdit()
+{
+	Q_ASSERT(editingInProgress());
+	if (fit_edits.empty())
+		return;
+	const auto edit = fit_edits.back();
+	fit_edits.pop_back();
+	if (edit.type == FitEdit::AddAnchor)
+	{
+		Q_ASSERT(edit.anchor_index + 1 == fit_anchors.size());
+		fit_anchors.pop_back();
+	}
+	else
+	{
+		Q_ASSERT(edit.anchor_index < fit_anchors.size());
+		fit_anchors[edit.anchor_index].hard_corner = !fit_anchors[edit.anchor_index].hard_corner;
+	}
+	if (fit_anchors.empty())
+	{
+		abortDrawing();
+		return;
+	}
+	updateFitPreview(false);
+}
+
+
+void DrawPathTool::finishFitDrawing()
+{
+	Q_ASSERT(editingInProgress());
+	updateFitPreview(false);
+	fit_anchors.clear();
+	fit_edits.clear();
+	finishDrawing();
+	updateFitActions();
+}
+
+
+void DrawPathTool::updateFitActions()
+{
+	const bool supported = fitModeSupported();
+	if (fit_mode_action)
+	{
+		fit_mode_action->setVisible(supported);
+		fit_mode_action->setEnabled(supported && !editingInProgress());
+	}
+	if (hard_corner_action)
+	{
+		hard_corner_action->setVisible(supported && fit_mode);
+		hard_corner_action->setEnabled(fitModeActive() && editingInProgress() && fit_anchors.size() >= 2);
+	}
+}
+
+
 bool DrawPathTool::mousePressEvent(QMouseEvent* event, const MapCoordF& map_coord, MapWidget* widget)
 {
 	cur_map_widget = widget;
 	created_point_at_last_mouse_press = false;
 	
+	if (fitModeActive())
+	{
+		if (editingInProgress() && event->button() == Qt::RightButton)
+		{
+			finishFitDrawing();
+			return true;
+		}
+		if (!isDrawingButton(event->button()))
+			return false;
+
+		MapCoord coord = shift_pressed ? snap_helper->snapToObject(map_coord, widget) : MapCoord(map_coord);
+		if (!editingInProgress())
+		{
+			startDrawing();
+			fit_anchors.clear();
+			fit_edits.clear();
+			finished_path_is_selected = false;
+		}
+		if (fit_anchors.empty() || !fit_anchors.back().coord.isPositionEqualTo(coord))
+		{
+			fit_anchors.push_back({ coord, false });
+			fit_edits.push_back({ FitEdit::AddAnchor, fit_anchors.size() - 1 });
+		}
+		updateFitPreview(false);
+		return true;
+	}
+
 	if (editingInProgress() &&
 		((event->button() == Qt::RightButton) &&
 		!drawOnRightClickEnabled()))
@@ -274,6 +457,19 @@ bool DrawPathTool::mouseMoveEvent(QMouseEvent* event, const MapCoordF& map_coord
 	cur_pos = event->pos();
 	cur_pos_map = map_coord;
 	
+	if (fitModeActive())
+	{
+		if (!containsDrawingButtons(event->buttons()))
+		{
+			constrained_pos_map = shift_pressed ? MapCoordF(snap_helper->snapToObject(map_coord, widget)) : map_coord;
+			if (editingInProgress())
+				updateFitPreview(true);
+			else
+				setPreviewPointsPosition(constrained_pos_map);
+		}
+		return true;
+	}
+
 	if (!containsDrawingButtons(event->buttons()))
 	{
 		updateHover();
@@ -332,6 +528,9 @@ bool DrawPathTool::mouseMoveEvent(QMouseEvent* event, const MapCoordF& map_coord
 
 bool DrawPathTool::mouseReleaseEvent(QMouseEvent* event, const MapCoordF& map_coord, MapWidget* widget)
 {
+	if (fitModeActive())
+		return isDrawingButton(event->button());
+
 	if (!isDrawingButton(event->button()))
 		return false;
 
@@ -418,6 +617,12 @@ bool DrawPathTool::mouseDoubleClickEvent(QMouseEvent* event, const MapCoordF& /*
 	if (event->button() != Qt::LeftButton)
 		return false;
 	
+	if (fitModeActive() && editingInProgress())
+	{
+		finishFitDrawing();
+		return true;
+	}
+
 	if (editingInProgress())
 	{
 		if (created_point_at_last_mouse_press)
@@ -430,6 +635,13 @@ bool DrawPathTool::mouseDoubleClickEvent(QMouseEvent* event, const MapCoordF& /*
 
 bool DrawPathTool::keyPressEvent(QKeyEvent* event)
 {
+	if (fitModeActive() && editingInProgress() &&
+	    event->key() == Qt::Key_Z && (event->modifiers() & Qt::ControlModifier))
+	{
+		undoLastFitEdit();
+		return true;
+	}
+
 	switch (event->key())
 	{
 	case Qt::Key_Escape:
@@ -443,7 +655,10 @@ bool DrawPathTool::keyPressEvent(QKeyEvent* event)
 	case Qt::Key_Backspace:
 		if (editingInProgress())
 		{
-			undoLastPoint();
+			if (fitModeActive())
+				undoLastFitEdit();
+			else
+				undoLastPoint();
 			return true;
 		}
 		else if (finished_path_is_selected)
@@ -456,9 +671,14 @@ bool DrawPathTool::keyPressEvent(QKeyEvent* event)
 	case Qt::Key_Return:
 		if (editingInProgress())
 		{
-			if (allow_closing_paths && !(event->modifiers() & Qt::ControlModifier))
-				closeDrawing();
-			finishDrawing();
+			if (fitModeActive())
+				finishFitDrawing();
+			else
+			{
+				if (allow_closing_paths && !(event->modifiers() & Qt::ControlModifier))
+					closeDrawing();
+				finishDrawing();
+			}
 			return true;
 		}
 		break;
@@ -486,6 +706,8 @@ bool DrawPathTool::keyPressEvent(QKeyEvent* event)
 		return true;
 		
 	case Qt::Key_Control:
+		if (fitModeActive())
+			return false;
 		ctrl_pressed = true;
 		angle_helper->setActive(true);
 		if (editingInProgress() && !dragging)
@@ -513,6 +735,8 @@ bool DrawPathTool::keyReleaseEvent(QKeyEvent* event)
 	switch (event->key())
 	{
 	case Qt::Key_Control:
+		if (fitModeActive())
+			return false;
 		ctrl_pressed = false;
 		if (!picked_angle)
 			angle_helper->setActive(false);
@@ -539,6 +763,25 @@ void DrawPathTool::draw(QPainter* painter, MapWidget* widget)
 {
 	drawPreviewObjects(painter, widget);
 	
+	if (fitModeActive() && editingInProgress())
+	{
+		painter->save();
+		painter->setRenderHint(QPainter::Antialiasing);
+		for (const auto& anchor : fit_anchors)
+		{
+			auto const point = widget->mapToViewport(MapCoordF(anchor.coord));
+			QPen pen(anchor.hard_corner ? QColor(220, 80, 30) : QColor(20, 150, 220));
+			pen.setWidth(2);
+			painter->setPen(pen);
+			painter->setBrush(QColor(255, 255, 255));
+			if (anchor.hard_corner)
+				painter->drawRect(QRectF(point, QSizeF(10, 10)).translated(-5, -5));
+			else
+				painter->drawEllipse(point, 5, 5);
+		}
+		painter->restore();
+	}
+
 	if (editingInProgress())
 	{
 		painter->setRenderHint(QPainter::Antialiasing);
@@ -894,10 +1137,13 @@ void DrawPathTool::finishDrawing()
 	DrawLineAndAreaTool::finishDrawing(appending ? append_to_object : nullptr);
 	
 	finished_path_is_selected = true;
+	updateFitActions();
 }
 
 void DrawPathTool::abortDrawing()
 {
+	fit_anchors.clear();
+	fit_edits.clear();
 	dragging = false;
 	following = false;
 	setEditingInProgress(false);
@@ -908,6 +1154,7 @@ void DrawPathTool::abortDrawing()
 	hidePreviewPoints();
 	
 	DrawLineAndAreaTool::abortDrawing();
+	updateFitActions();
 }
 
 void DrawPathTool::updateDirtyRect()
@@ -956,6 +1203,13 @@ void DrawPathTool::setDrawingSymbol(const Symbol* symbol)
 		return;
 	
 	DrawLineAndAreaTool::setDrawingSymbol(symbol);
+	if (!fitModeSupported())
+	{
+		fit_mode = false;
+		if (fit_mode_action && fit_mode_action->isChecked())
+			fit_mode_action->setChecked(false);
+	}
+	updateFitActions();
 	updateDashPointDrawing();
 	updateStatusText();
 }

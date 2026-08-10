@@ -23,6 +23,7 @@
 #define OPENORIENTEERING_DRAW_PATH_H
 
 #include <memory>
+#include <vector>
 
 #include <QtGlobal>
 #include <QObject>
@@ -85,6 +86,26 @@ protected slots:
 	virtual void objectSelectionChanged();
 	
 protected:
+	struct FitAnchor
+	{
+		MapCoord coord;
+		bool hard_corner = false;
+	};
+	struct FitEdit
+	{
+		enum Type { AddAnchor, ToggleCorner } type;
+		std::vector<FitAnchor>::size_type anchor_index;
+	};
+
+	bool fitModeSupported() const;
+	bool fitModeActive() const;
+	void setFitMode(bool enabled);
+	void toggleLastFitCorner();
+	void updateFitPreview(bool add_hover_point);
+	void undoLastFitEdit();
+	void finishFitDrawing();
+	void updateFitActions();
+
 	void updatePreviewPath() override;
 	/** Should be called when moving the cursor without the draw button being held */
 	void updateHover();
@@ -130,6 +151,8 @@ protected:
 	QPointer<KeyButtonBar> key_button_bar;
 	QPointer<QToolButton> dash_points_button;
 	QPointer<QToolButton> azimuth_button;
+	QPointer<QAction> fit_mode_action;
+	QPointer<QAction> hard_corner_action;
 	
 	MapWidget* cur_map_widget;
 	
@@ -170,11 +193,14 @@ protected:
 	bool draw_dash_points = false;
 	bool create_segment   = false;
 	bool create_spline_corner = false; ///< For drawing bezier splines without parallel handles
+	bool fit_mode = false;
 	bool path_has_preview_point = false;
 	bool previous_point_is_curve_point = false;
 	bool created_point_at_last_mouse_press = false;  ///< Used for finishing on double click.
 	bool finished_path_is_selected = false;  ///< True just after finishing a path
 	
+	std::vector<FitAnchor> fit_anchors;
+	std::vector<FitEdit> fit_edits;
 };
 
 

@@ -449,6 +449,14 @@ class PathObject : public Object  // clazy:exclude=copyable-polymorphic
 	
 public:
 	
+	/** A user supplied anchor for an interpolating fitted path. */
+	struct FittedPathAnchor
+	{
+		MapCoord coord;
+		bool hard_corner = false;
+	};
+	using FittedPathAnchors = std::vector<FittedPathAnchor>;
+
 	/** Returned by calcAllIntersectionsWith(). */
 	struct Intersection
 	{
@@ -559,12 +567,31 @@ public:
 	MapCoord& getCoordinateRef(MapCoordVector::size_type pos)
 	{
 		Q_ASSERT(pos < coords.size());
+		clearFittedPath();
 		setOutputDirty();
 		return coords[pos];
 	}
 	
 	/** Replaces the i-th coordinate with c. */
 	void setCoordinate(MapCoordVector::size_type pos, const MapCoord& c);
+
+	/** Returns whether this path was created from interpolating fit anchors. */
+	bool hasFittedPath() const { return !fitted_path_anchors.empty(); }
+
+	/** Returns the user supplied anchors of an interpolating fitted path. */
+	const FittedPathAnchors& getFittedPathAnchors() const { return fitted_path_anchors; }
+
+	/**
+	 * Sets user supplied anchors and rebuilds the visible cubic Bezier geometry.
+	 * Endpoint corner flags are ignored because endpoints have no join.
+	 */
+	void setFittedPathAnchors(FittedPathAnchors anchors);
+
+	/** Removes fit metadata while preserving the current Bezier geometry. */
+	void clearFittedPath();
+
+	/** Synchronizes retained anchors with the generated curve's regular nodes. */
+	void syncFittedPathAnchors();
 	
 	/** Adds the coordinate at the given index. */
 	void addCoordinate(MapCoordVector::size_type pos, const MapCoord& c);
@@ -1005,11 +1032,20 @@ protected:
 	void createRenderables(ObjectRenderables& output, Symbol::RenderableOptions options) const override;
 	
 private:
+	/** Rebuilds the visible cubic Bezier geometry from fitted_path_anchors. */
+	void rebuildFittedPath();
+
+	/** Returns the fitted anchor corresponding to a generated curve node. */
+	FittedPathAnchors::size_type fittedAnchorIndex(MapCoordVector::size_type coord_index) const;
+
 	/**
 	 * Origin shift of the object pattern. Only used if the object
 	 * has a symbol which interprets this value.
 	 */
 	MapCoord pattern_origin = {};
+
+	/** Source anchors retained for interpolating fitted paths. */
+	FittedPathAnchors fitted_path_anchors;
 	
 	/** Path parts list */
 	mutable PathPartVector path_parts;

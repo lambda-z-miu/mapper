@@ -219,7 +219,7 @@ int main(int argc, char** argv)
 		resetActivationWindow(qapp);
 #endif
 		
-		first_window->setVisible(true);
+		first_window->showFullScreen();
 		first_window->raise();
 	});
 	
