@@ -31,12 +31,14 @@
 #include <QColor>
 #include <QCursor>
 #include <QFlags>
+#include <QIcon>
 #include <QKeyEvent>
 #include <QLatin1String>
 #include <QLineF>
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPen>
 #include <QPixmap>
 #include <QPointF>
@@ -67,6 +69,51 @@
 
 
 namespace OpenOrienteering {
+
+namespace {
+
+QIcon makeMultiPointFitIcon()
+{
+	QIcon icon;
+	for (const int side : { 16, 24, 32, 48, 64 })
+	{
+		QPixmap pixmap(side, side);
+		pixmap.fill(Qt::transparent);
+
+		QPainter painter(&pixmap);
+		painter.setRenderHint(QPainter::Antialiasing);
+
+		QPainterPath curve;
+		curve.moveTo(side * 0.12, side * 0.70);
+		curve.cubicTo(side * 0.33, side * 0.26,
+		              side * 0.66, side * 0.88,
+		              side * 0.88, side * 0.42);
+		QPen curve_pen(QColor(232, 245, 252));
+		curve_pen.setWidthF(side * 0.10);
+		curve_pen.setCapStyle(Qt::RoundCap);
+		painter.setPen(curve_pen);
+		painter.setBrush(Qt::NoBrush);
+		painter.drawPath(curve);
+
+		QPen point_pen(QColor(255, 231, 232));
+		point_pen.setWidthF(side * 0.045);
+		painter.setPen(point_pen);
+		painter.setBrush(QColor(255, 132, 137));
+		const qreal point_radius = side * 0.14;
+		for (const auto& point : {
+			QPointF(side * 0.31, side * 0.45),
+			QPointF(side * 0.50, side * 0.56),
+			QPointF(side * 0.70, side * 0.59) })
+		{
+			painter.drawEllipse(point, point_radius, point_radius);
+		}
+
+		icon.addPixmap(pixmap);
+	}
+	return icon;
+}
+
+}  // namespace
 
 DrawPathTool::DrawPathTool(MapEditorController* editor, QAction* tool_action, bool is_helper_tool, bool allow_closing_paths)
 : DrawLineAndAreaTool(editor, DrawPath, tool_action, is_helper_tool)
@@ -106,6 +153,7 @@ void DrawPathTool::init()
 		if (auto* toolbar = editor->getDrawingToolBar())
 		{
 			fit_mode_action = new QAction(tr("Multi-point fit"), this);
+			fit_mode_action->setIcon(makeMultiPointFitIcon());
 			fit_mode_action->setCheckable(true);
 			fit_mode_action->setToolTip(tr("Draw a smooth curve through multiple points"));
 			connect(fit_mode_action, &QAction::toggled, this, &DrawPathTool::setFitMode);

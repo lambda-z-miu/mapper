@@ -51,7 +51,14 @@
 
 
 namespace OpenOrienteering {
+namespace {
 
+int scaledSymbolIconSize()
+{
+	return qMax(1, qRound(0.88 * (Settings::getInstance().getSymbolWidgetIconSizePx() + 1)));
+}
+
+}  // namespace
 namespace MimeType {
 
 /// The index of a symbol during drag-and-drop
@@ -83,7 +90,7 @@ SymbolRenderWidget::SymbolRenderWidget(Map* map, bool mobile_mode, QWidget* pare
 , hover_symbol_index(-1)
 , last_drop_pos(-1)
 , last_drop_row(-1)
-, icon_size(Settings::getInstance().getSymbolWidgetIconSizePx())
+, icon_size(scaledSymbolIconSize())
 , icons_per_row(6)
 , num_rows(5)
 , preferred_size(icons_per_row * icon_size, num_rows * icon_size)
@@ -220,7 +227,7 @@ void SymbolRenderWidget::updateSingleIcon(int i)
 
 void SymbolRenderWidget::settingsChanged()
 {
-	const auto new_size = Settings::getInstance().getSymbolWidgetIconSizePx();
+	const auto new_size = scaledSymbolIconSize();
 	if (icon_size != new_size)
 	{
 		for (int i = 0; i < map->getNumSymbols(); ++i)
@@ -243,7 +250,7 @@ QSize SymbolRenderWidget::sizeHint() const
 void SymbolRenderWidget::adjustLayout()
 {
 	auto old_icon_size = icon_size;
-	icon_size = Settings::getInstance().getSymbolWidgetIconSizePx() + 1;
+	icon_size = scaledSymbolIconSize();
 	// Allow symbol widget to be that much wider than the viewport
 	int overflow = icon_size / 3;
 	icons_per_row = qMax(1, (width() + overflow) / icon_size);
@@ -463,7 +470,9 @@ void SymbolRenderWidget::drawIcon(QPainter &painter, int i) const
 		painter.drawRect(QRectF(0.5f, 0.5f, icon_size - 3, icon_size - 3));
 	}
 	
-	painter.setPen(Qt::gray);
+	QPen grid_pen(qRgb(91, 126, 146));
+	grid_pen.setWidth(2);
+	painter.setPen(grid_pen);
 	painter.drawLine(QPoint(0, icon_size - 1), QPoint(icon_size - 1, icon_size - 1));
 	painter.drawLine(QPoint(icon_size - 1, 0), QPoint(icon_size - 1, icon_size - 2));
 	

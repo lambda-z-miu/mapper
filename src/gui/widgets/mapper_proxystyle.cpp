@@ -40,6 +40,7 @@
 #include <QRect>
 #include <QRgb>
 #include <QScreen>
+#include <QPolygonF>
 #include <QSize>
 #include <QStyleOption>
 #include <QStyleOptionComplex>
@@ -351,6 +352,36 @@ void MapperProxyStyle::drawSegmentedButton(int segment, QStyle::PrimitiveElement
 
 void MapperProxyStyle::drawComplexControl(QStyle::ComplexControl control, const QStyleOptionComplex* option, QPainter* painter, const QWidget* widget) const
 {
+	if (control == CC_ToolButton
+	    && widget
+	    && widget->property("lightMenuIndicator").toBool())
+	{
+		QProxyStyle::drawComplexControl(control, option, painter, widget);
+
+		if (const auto* tool_button = qstyleoption_cast<const QStyleOptionToolButton*>(option))
+		{
+			auto const menu_rect = subControlRect(CC_ToolButton, tool_button, SC_ToolButtonMenu, widget);
+			if (menu_rect.isValid())
+			{
+				const auto center = menu_rect.center();
+				const auto half_width = qMax(3, menu_rect.width() / 5);
+				const auto half_height = qMax(2, menu_rect.height() / 7);
+				QPolygonF arrow;
+				arrow << QPointF(center.x() - half_width, center.y() - half_height)
+				      << QPointF(center.x() + half_width, center.y() - half_height)
+				      << QPointF(center.x(), center.y() + half_height);
+
+				painter->save();
+				painter->setRenderHint(QPainter::Antialiasing);
+				painter->setPen(Qt::NoPen);
+				painter->setBrush((tool_button->state & State_Enabled) ? QColor(237, 246, 251) : QColor(111, 134, 149));
+				painter->drawPolygon(arrow);
+				painter->restore();
+			}
+		}
+		return;
+	}
+
 	if (touch_mode)
 	{
 		switch (control)
@@ -406,18 +437,24 @@ int MapperProxyStyle::pixelMetric(PixelMetric metric, const QStyleOption* option
 			break;
 		}
 	}
-#ifdef Q_OS_MACOS
 	else
 	{
 		switch (metric)
 		{
 		case QStyle::PM_ToolBarIconSize:
-			return (QProxyStyle::pixelMetric(metric) + QProxyStyle::pixelMetric(QStyle::PM_SmallIconSize)) / 2;
+			// Desktop toolbars contain the application's primary editing tools.
+			// Prioritize the primary editing tools with a comfortably large target.
+			return qRound(1.75 * QProxyStyle::pixelMetric(metric, option, widget));
+		case QStyle::PM_TitleBarHeight:
+			return qRound(1.1 * QProxyStyle::pixelMetric(metric, option, widget));
+		case QStyle::PM_MenuHMargin:
+			return qRound(1.25 * QProxyStyle::pixelMetric(metric, option, widget));
+		case QStyle::PM_MenuVMargin:
+			return qRound(1.5 * QProxyStyle::pixelMetric(metric, option, widget));
 		default:
 			break;
 		}
 	}
-#endif
 	
 	return QProxyStyle::pixelMetric(metric, option, widget);
 }

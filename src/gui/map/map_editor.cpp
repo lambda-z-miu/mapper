@@ -232,8 +232,22 @@ namespace {
 	}
 	
 	
-}  // namespace
+	QIcon makeLightIcon(const QIcon& source)
+	{
+		QIcon result;
+		for (const auto& size : { QSize(16, 16), QSize(24, 24), QSize(32, 32), QSize(48, 48), QSize(64, 64) })
+		{
+			auto pixmap = source.pixmap(size);
+			QPainter painter(&pixmap);
+			painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+			painter.fillRect(pixmap.rect(), Qt::white);
+			result.addPixmap(pixmap);
+		}
+		return result;
+	}
 
+
+}  // namespace
 
 
 namespace MimeType {
@@ -802,6 +816,12 @@ void MapEditorController::attach(MainWindow* window)
 			
 			createMenuAndToolbars();
 			restoreWindowState();
+			if (toolbar_drawing)
+			{
+				toolbar_drawing->setAllowedAreas(Qt::LeftToolBarArea);
+				toolbar_drawing->setMovable(false);
+				window->addToolBar(Qt::LeftToolBarArea, toolbar_drawing);
+			}
 		}
 	}
 	else if (mode == SymbolEditor)
@@ -1007,6 +1027,8 @@ void MapEditorController::createActions()
 	
 	show_grid_act = newCheckAction("showgrid", tr("Show grid"), this, SLOT(showGrid()), "grid.png", QString{}, "grid.html");
 	configure_grid_act = newAction("configuregrid", tr("Configure grid..."), this, SLOT(configureGrid()), "grid.png", QString{}, "grid.html");
+	show_grid_act->setIcon(makeLightIcon(show_grid_act->icon()));
+	configure_grid_act->setIcon(makeLightIcon(configure_grid_act->icon()));
 	pan_act = newToolAction("panmap", tr("Pan"), this, SLOT(pan()), "move.png", QString{}, "view_menu.html");
 	move_to_gps_pos_act = newAction("movegps", tr("Move to my location"), this, SLOT(moveToGpsPos()), "move-to-gps.png", QString{}, "view_menu.html");
 	move_to_gps_pos_act->setEnabled(false);
@@ -1065,6 +1087,7 @@ void MapEditorController::createActions()
 	cut_hole_act = newToolAction("cuthole", tr("Cut free form hole"), this, SLOT(cutHoleClicked()), "tool-cut-hole.png", QString{}, "toolbars.html#cut_hole"); // cut hole using a path
 	cut_hole_circle_act = newToolAction("cutholecircle", tr("Cut round hole"), this, SLOT(cutHoleCircleClicked()), "tool-cut-hole.png", QString{}, "toolbars.html#cut_hole");
 	cut_hole_rectangle_act = newToolAction("cutholerectangle", tr("Cut rectangular hole"), this, SLOT(cutHoleRectangleClicked()), "tool-cut-hole.png", QString{}, "toolbars.html#cut_hole");
+	cut_hole_act->setIcon(makeLightIcon(cut_hole_act->icon()));
 	cut_hole_menu = new QMenu(tr("Cut hole"));
 	cut_hole_menu->menuAction()->setMenuRole(QAction::NoRole);
 	cut_hole_menu->setIcon(QIcon(QString::fromLatin1(":/images/tool-cut-hole.png")));
@@ -1316,10 +1339,12 @@ void MapEditorController::createMenuAndToolbars()
 	// View toolbar
 	toolbar_view = window->addToolBar(tr("View"));
 	toolbar_view->setObjectName(QString::fromLatin1("View toolbar"));
+	toolbar_view->setProperty("modernRole", QStringLiteral("topCommand"));
 	auto* grid_button = new QToolButton();
 	grid_button->setCheckable(true);
 	grid_button->setDefaultAction(show_grid_act);
 	grid_button->setPopupMode(QToolButton::MenuButtonPopup);
+	grid_button->setProperty("lightMenuIndicator", true);
 	auto* grid_menu = new QMenu(grid_button);
 	grid_menu->addAction(tr("Configure grid..."));
 	grid_button->setMenu(grid_menu);
@@ -1336,6 +1361,7 @@ void MapEditorController::createMenuAndToolbars()
 	// MapParts toolbar
 	toolbar_mapparts = window->addToolBar(tr("Map parts"));
 	toolbar_mapparts->setObjectName(QString::fromLatin1("Map parts toolbar"));
+	toolbar_mapparts->setProperty("modernRole", QStringLiteral("topCommand"));
 	if (!mappart_selector_box)
 	{
 		mappart_selector_box = new QComboBox(toolbar_mapparts);
@@ -1350,6 +1376,8 @@ void MapEditorController::createMenuAndToolbars()
 	// Drawing toolbar
 	toolbar_drawing = window->addToolBar(tr("Drawing"));
 	toolbar_drawing->setObjectName(QString::fromLatin1("Drawing toolbar"));
+	toolbar_drawing->setProperty("modernRole", QStringLiteral("leftRail"));
+	toolbar_drawing->setToolButtonStyle(Qt::ToolButtonIconOnly);
 	toolbar_drawing->addAction(edit_tool_act);
 	toolbar_drawing->addAction(edit_line_tool_act);
 	toolbar_drawing->addAction(draw_point_act);
@@ -1362,13 +1390,17 @@ void MapEditorController::createMenuAndToolbars()
 	toolbar_drawing->addSeparator();
 	
 	auto* paint_action = paint_feature->paintAction();
+	paint_action->setIcon(makeLightIcon(paint_action->icon()));
 	toolbar_drawing->addAction(paint_action);
 	if (auto* button = qobject_cast<QToolButton*>(toolbar_drawing->widgetForAction(paint_action)))
 		button->setPopupMode(QToolButton::MenuButtonPopup);
+	if (auto* button = qobject_cast<QToolButton*>(toolbar_drawing->widgetForAction(paint_action)))
+		button->setProperty("lightMenuIndicator", true);
 	
 	// Editing toolbar
 	toolbar_editing = window->addToolBar(tr("Editing"));
 	toolbar_editing->setObjectName(QString::fromLatin1("Editing toolbar"));
+	toolbar_editing->setProperty("modernRole", QStringLiteral("topCommand"));
 	toolbar_editing->addAction(delete_act);
 	toolbar_editing->addAction(duplicate_act);
 	toolbar_editing->addAction(switch_symbol_act);
@@ -1383,6 +1415,7 @@ void MapEditorController::createMenuAndToolbars()
 	cut_hole_button->setToolButtonStyle(Qt::ToolButtonIconOnly);
 	cut_hole_button->setDefaultAction(cut_hole_act);
 	cut_hole_button->setPopupMode(QToolButton::MenuButtonPopup);
+	cut_hole_button->setProperty("lightMenuIndicator", true);
 	cut_hole_button->setMenu(cut_hole_menu);
 	toolbar_editing->addWidget(cut_hole_button);
 	
@@ -1394,6 +1427,7 @@ void MapEditorController::createMenuAndToolbars()
 	// Advanced editing toolbar
 	toolbar_advanced_editing = window->addToolBar(tr("Advanced editing"));
 	toolbar_advanced_editing->setObjectName(QString::fromLatin1("Advanced editing toolbar"));
+	toolbar_advanced_editing->setProperty("modernRole", QStringLiteral("topCommand"));
 	toolbar_advanced_editing->addAction(clip_area_act);
 	toolbar_advanced_editing->addAction(erase_area_act);
 	toolbar_advanced_editing->addAction(convert_to_curves_act);
@@ -1574,6 +1608,7 @@ void MapEditorController::createMobileGUI()
 	bottom_action_bar->addAction(gps_temporary_point_act, 1, col++);
 
 	auto* paint_action = paint_feature->paintAction();
+	paint_action->setIcon(makeLightIcon(paint_action->icon()));
 	bottom_action_bar->addAction(paint_action, 0, col);
 	if (auto* button = bottom_action_bar->getButtonForAction(paint_action))
 		button->setPopupMode(QToolButton::DelayedPopup);

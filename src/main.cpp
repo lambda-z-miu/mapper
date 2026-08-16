@@ -29,6 +29,7 @@
 #include <QtPlugin>  // IWYU pragma: keep
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFontInfo>
 #include <QGuiApplication>
 #include <QLatin1String>
 #include <QList>
@@ -60,6 +61,67 @@
 // IWYU pragma: no_forward_declare QTranslator
 
 using namespace OpenOrienteering;
+namespace {
+
+void applyModernDesktopTheme()
+{
+	qApp->setStyleSheet(QStringLiteral(R"(
+		QMainWindow { background: #f4f7fa; }
+		#modernWindowChrome { background: #0d2538; }
+		#modernWindowTitleBar { background: #0d2538; border-bottom: 1px solid #29475b; }
+		#modernWindowTitle { color: #edf6fb; font-size: 15px; font-weight: 600; }
+		#modernWindowTitleBar QToolButton { background: transparent; border: 0; border-radius: 0; color: #edf6fb; font-size: 19px; min-width: 44px; min-height: 38px; padding: 0; }
+		#modernWindowTitleBar QToolButton:hover { background: #23495f; border: 0; }
+		#modernWindowTitleBar QToolButton[windowControl="close"]:hover { background: #bd3345; color: #ffffff; }
+		QMainWindow::separator { background: #081b29; width: 6px; height: 6px; }
+		QMenuBar { background: #0d2538; color: #edf6fb; border-bottom: 1px solid #29475b; padding: 3px 12px; }
+		QMenuBar::item { background: transparent; border-radius: 6px; margin: 2px 3px; padding: 5px 8px; }
+		QMenuBar::item:selected { background: #23465d; color: #ffffff; }
+		QMenu { background: #123247; color: #edf6fb; border: 1px solid #36566c; border-radius: 8px; padding: 6px; }
+		QMenu::item { border-radius: 5px; padding: 8px 32px 8px 12px; }
+		QMenu::item:selected { background: #23617f; color: #ffffff; }
+		QToolBar { background: #102b3e; color: #edf6fb; border: 0; border-bottom: 1px solid #29495e; spacing: 4px; padding: 5px 8px; }
+		QToolBar::separator { background: #3e5c70; margin: 7px 6px; width: 1px; }
+		QToolButton { background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 5px; }
+		QToolButton:hover { background: #23495f; border-color: #47758d; }
+		QToolButton:checked { background: #087ca8; border-color: #59c4e5; }
+		QToolBar[modernRole="leftRail"] { background: #0f2a3d; border: 0; border-right: 1px solid #26465c; spacing: 6px; padding: 9px 7px; }
+		QToolBar[modernRole="leftRail"]::separator { background: #3d5b70; height: 1px; margin: 7px 3px; }
+		QToolBar[modernRole="leftRail"] QToolButton { background: transparent; border-color: transparent; }
+		QToolBar[modernRole="leftRail"] QToolButton:hover { background: #22475f; border-color: #426a84; }
+		QToolBar[modernRole="leftRail"] QToolButton:checked { background: #087ca8; border-color: #54bde0; }
+		QDockWidget { background: #102b3e; color: #edf6fb; font-weight: 600; }
+		QDockWidget::title { background: #102b3e; color: #edf6fb; border-bottom: 1px solid #29495e; padding: 9px 12px; text-align: left; }
+		QDockWidget::close-button, QDockWidget::float-button { background: transparent; border-radius: 5px; padding: 3px; }
+		QDockWidget::close-button:hover, QDockWidget::float-button:hover { background: #e8f2f7; }
+		QStatusBar { background: #0d2538; color: #e6f1f7; border-top: 1px solid #29495e; font-size: 14px; min-height: 28px; padding: 4px 12px; }
+		QStatusBar::item { border: 0; }
+		QPushButton { background: #ffffff; border: 1px solid #c8d7e2; border-radius: 6px; color: #193248; padding: 6px 12px; }
+		QPushButton:hover { background: #edf5f9; border-color: #8dbfd6; }
+		QPushButton:default { background: #087ca8; border-color: #087ca8; color: white; }
+		QComboBox, QLineEdit, QSpinBox { background: #ffffff; border: 1px solid #cbd9e3; border-radius: 6px; padding: 4px 7px; }
+		QTabBar::tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: #b9cbd7; padding: 8px 12px; }
+		QTabBar::tab:selected { color: #ffffff; border-bottom-color: #4cc8ed; }
+		QScrollArea, SymbolRenderWidget { background: #102b3e; border: 0; }
+		QDockWidget > QWidget, SymbolWidget, SymbolWidget QWidget { background: #102b3e; color: #edf6fb; }
+		SymbolRenderWidget { background: #102b3e; }
+		TemplateListWidget { background: #102b3e; color: #edf6fb; font-size: 15px; }
+		TemplateListWidget QTableView { background: #102b3e; alternate-background-color: #173a50; color: #edf6fb; border: 1px solid #36566c; gridline-color: #29495e; font-size: 15px; }
+		TemplateListWidget QTableView::item { padding: 6px; }
+		TemplateListWidget QTableView::item:selected { background: #23617f; color: #ffffff; }
+		TemplateListWidget QHeaderView::section { background: #173a50; color: #dcecf5; border: 0; border-bottom: 1px solid #36566c; padding: 7px; font-size: 14px; }
+		QDockWidget QLineEdit, QDockWidget QComboBox, QDockWidget QSpinBox { background: #173a50; color: #edf6fb; border-color: #41687d; }
+		QDockWidget QPushButton { background: #173a50; color: #edf6fb; border-color: #41687d; }
+		QDockWidget QPushButton:hover { background: #23617f; border-color: #59c4e5; }
+		QScrollBar:vertical { background: #102b3e; width: 12px; margin: 2px; }
+		QScrollBar::handle:vertical { background: #46677b; border-radius: 5px; min-height: 28px; }
+		QScrollBar::handle:vertical:hover { background: #5f90a7; }
+		QStatusBar QLabel, QStatusBar QFrame, QStatusBar QToolButton { color: #edf6fb; font-size: 14px; }
+		QStatusBar QComboBox, QStatusBar QLineEdit { background: #173a50; color: #edf6fb; border-color: #41687d; }
+		SymbolWidget { border-left: 6px solid #081b29; border-right: 6px solid #081b29; }	)"));
+}
+
+}  // namespace
 
 
 #if defined(MAPPER_USE_FAKE_POSITION_PLUGIN)
@@ -198,7 +260,15 @@ int main(int argc, char** argv)
 		// No leak: QApplication takes ownership.
 		QApplication::setStyle(new MapperProxyStyle());
 #endif
+		applyModernDesktopTheme();
 		
+		auto ui_font = QApplication::font();
+		if (ui_font.pointSizeF() > 0)
+			ui_font.setPointSizeF(1.1 * ui_font.pointSizeF());
+		else
+			ui_font.setPixelSize(qRound(1.1 * QFontInfo(ui_font).pixelSize()));
+		QApplication::setFont(ui_font);
+
 		// Create first main window
 		auto first_window = new MainWindow();
 		Q_ASSERT(first_window->testAttribute(Qt::WA_DeleteOnClose));
@@ -219,7 +289,7 @@ int main(int argc, char** argv)
 		resetActivationWindow(qapp);
 #endif
 		
-		first_window->showFullScreen();
+		first_window->showMaximized();
 		first_window->raise();
 	});
 	

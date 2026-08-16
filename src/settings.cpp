@@ -117,7 +117,8 @@ Settings::Settings()
 	map_editor_snap_distance_default = 15.0f;
 	start_drag_distance_default = Util::mmToPixelLogical(3.0f);
 #else
-	symbol_widget_icon_size_mm_default = 8;
+	// Make the symbol palette easier to scan on desktop displays.
+	symbol_widget_icon_size_mm_default = 15;
 	map_editor_click_tolerance_default = 3.0f;
 	map_editor_snap_distance_default = 10.0f;
 	start_drag_distance_default = QApplication::startDragDistance();

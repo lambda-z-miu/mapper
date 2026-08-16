@@ -27,8 +27,11 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
+#include <QFontInfo>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QMenuBar>
 #include <QPushButton>
 #include <QScopedValueRollback>
@@ -36,8 +39,10 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWhatsThis>
+#include <QWindow>
 
 #if defined(Q_OS_ANDROID)
 #  include <QtAndroid>
@@ -80,6 +85,70 @@ constexpr int MainWindow::max_recent_files;
 
 int MainWindow::num_open_files = 0;
 
+namespace {
+
+class WindowTitleBar final : public QWidget
+{
+public:
+	explicit WindowTitleBar(QWidget* parent)
+	: QWidget(parent)
+	{
+		setObjectName(QStringLiteral("modernWindowTitleBar"));
+		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		setFixedHeight(38);
+	}
+
+protected:
+	void mousePressEvent(QMouseEvent* event) override
+	{
+		if (event->button() != Qt::LeftButton)
+			return;
+
+		auto* top_level_window = window();
+		if (auto* handle = top_level_window->windowHandle())
+		{
+			if (handle->startSystemMove())
+				return;
+		}
+
+		if (!top_level_window->isMaximized() && !top_level_window->isFullScreen())
+		{
+			moving = true;
+			drag_offset = event->globalPos() - top_level_window->frameGeometry().topLeft();
+		}
+	}
+
+	void mouseMoveEvent(QMouseEvent* event) override
+	{
+		if (moving && (event->buttons() & Qt::LeftButton))
+			window()->move(event->globalPos() - drag_offset);
+	}
+
+	void mouseReleaseEvent(QMouseEvent* event) override
+	{
+		if (event->button() == Qt::LeftButton)
+			moving = false;
+	}
+
+	void mouseDoubleClickEvent(QMouseEvent* event) override
+	{
+		if (event->button() != Qt::LeftButton)
+			return;
+
+		auto* top_level_window = window();
+		if (top_level_window->isMaximized())
+			top_level_window->showNormal();
+		else
+			top_level_window->showMaximized();
+	}
+
+private:
+	bool moving = false;
+	QPoint drag_offset;
+};
+
+}  // namespace
+
 MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags flags)
 : MainWindow { true, parent, flags }
 {
@@ -87,7 +156,7 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags flags)
 }
 
 MainWindow::MainWindow(bool as_main_window, QWidget* parent, Qt::WindowFlags flags)
-: QMainWindow           { parent, flags }
+: QMainWindow           { parent, as_main_window ? (flags | Qt::FramelessWindowHint) : flags }
 , controller            { nullptr }
 , create_menu           { as_main_window }
 , show_menu             { create_menu && !Settings::mobileModeEnforced() }
@@ -99,9 +168,81 @@ MainWindow::MainWindow(bool as_main_window, QWidget* parent, Qt::WindowFlags fla
 , has_autosave_conflict { false }
 , maximized_before_fullscreen { false }
 , homescreen_disabled   { false }
+, menu_bar_scaled       { false }
 {
 	setWindowIcon(QIcon(QString::fromLatin1(":/images/mapper.png")));
 	setAttribute(Qt::WA_DeleteOnClose);
+	
+	if (as_main_window)
+	{
+		auto* window_chrome = new QWidget(this);
+		window_chrome->setObjectName(QStringLiteral("modernWindowChrome"));
+		auto* chrome_layout = new QVBoxLayout(window_chrome);
+		chrome_layout->setContentsMargins(0, 0, 0, 0);
+		chrome_layout->setSpacing(0);
+		
+		auto* title_bar = new WindowTitleBar(window_chrome);
+		auto* title_layout = new QHBoxLayout(title_bar);
+		title_layout->setContentsMargins(10, 0, 0, 0);
+		title_layout->setSpacing(0);
+		
+		auto* left_section = new QWidget(title_bar);
+		left_section->setFixedWidth(132);
+		auto* left_layout = new QHBoxLayout(left_section);
+		left_layout->setContentsMargins(0, 0, 0, 0);
+		auto* icon_label = new QLabel(left_section);
+		icon_label->setPixmap(windowIcon().pixmap(QSize(20, 20)));
+		left_layout->addWidget(icon_label);
+		left_layout->addStretch();
+		
+		auto* title_label = new QLabel(windowTitle(), title_bar);
+		title_label->setObjectName(QStringLiteral("modernWindowTitle"));
+		title_label->setAlignment(Qt::AlignCenter);
+		title_label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+		connect(this, &QWidget::windowTitleChanged, title_label, &QLabel::setText);
+		connect(this, &QWidget::windowIconChanged, icon_label, [icon_label](const QIcon& icon) {
+			icon_label->setPixmap(icon.pixmap(QSize(20, 20)));
+		});
+		
+		auto* controls = new QWidget(title_bar);
+		controls->setFixedWidth(132);
+		auto* controls_layout = new QHBoxLayout(controls);
+		controls_layout->setContentsMargins(0, 0, 0, 0);
+		controls_layout->setSpacing(0);
+		auto* minimize_button = new QToolButton(controls);
+		minimize_button->setText(QString(QChar(0x2212)));
+		minimize_button->setToolTip(tr("Minimize window"));
+		auto* maximize_button = new QToolButton(controls);
+		maximize_button->setText(QString(QChar(0x25a1)));
+		maximize_button->setToolTip(tr("Maximize window"));
+		auto* close_button = new QToolButton(controls);
+		close_button->setText(QString(QChar(0x00d7)));
+		close_button->setToolTip(tr("Close window"));
+		close_button->setProperty("windowControl", QStringLiteral("close"));
+		for (auto* button : { minimize_button, maximize_button, close_button })
+		{
+			button->setAutoRaise(true);
+			controls_layout->addWidget(button);
+		}
+		connect(minimize_button, &QToolButton::clicked, this, &QWidget::showMinimized);
+		connect(maximize_button, &QToolButton::clicked, this, [this]() {
+			if (isMaximized())
+				showNormal();
+			else
+				showMaximized();
+		});
+		connect(close_button, &QToolButton::clicked, this, [this]() { close(); });
+		
+		title_layout->addWidget(left_section);
+		title_layout->addWidget(title_label, 1);
+		title_layout->addWidget(controls);
+		chrome_layout->addWidget(title_bar);
+		
+		application_menu_bar = new QMenuBar(window_chrome);
+		application_menu_bar->setObjectName(QStringLiteral("applicationMenuBar"));
+		chrome_layout->addWidget(application_menu_bar);
+		setMenuWidget(window_chrome);
+	}
 	
 	status_label = new QLabel();
 	statusBar()->addWidget(status_label, 1);
@@ -437,6 +578,28 @@ void MainWindow::createFileMenu()
 	
 	if (show_menu)
 	{
+		if (!menu_bar_scaled)
+		{
+			auto menu_bar_font = menuBar()->font();
+			if (menu_bar_font.pointSizeF() > 0)
+				menu_bar_font.setPointSizeF(1.6 * menu_bar_font.pointSizeF());
+			else
+				menu_bar_font.setPixelSize(qRound(1.6 * QFontInfo(menu_bar_font).pixelSize()));
+			menuBar()->setFont(menu_bar_font);
+			menuBar()->setMinimumHeight(menuBar()->sizeHint().height());
+			menu_bar_scaled = true;
+			static bool popup_menu_font_scaled = false;
+			if (!popup_menu_font_scaled)
+			{
+				auto popup_menu_font = QApplication::font("QMenu");
+				if (popup_menu_font.pointSizeF() > 0)
+					popup_menu_font.setPointSizeF(1.6 * popup_menu_font.pointSizeF());
+				else
+					popup_menu_font.setPixelSize(qRound(1.6 * QFontInfo(popup_menu_font).pixelSize()));
+				QApplication::setFont(popup_menu_font, "QMenu");
+				popup_menu_font_scaled = true;
+			}
+		}
 		file_menu = menuBar()->addMenu(tr("&File"));
 	}
 	else
@@ -458,6 +621,7 @@ void MainWindow::createFileMenu()
 	
 	general_toolbar = new QToolBar(tr("General"));
 	general_toolbar->setObjectName(QString::fromLatin1("General toolbar"));
+	general_toolbar->setProperty("modernRole", QStringLiteral("topCommand"));
 	general_toolbar->addAction(new_act);
 	general_toolbar->addAction(open_act);
 	general_toolbar->addAction(save_act);

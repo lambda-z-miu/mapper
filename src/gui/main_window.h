@@ -39,6 +39,7 @@ class QEvent;
 class QKeyEvent;
 class QLabel;
 class QMenu;
+class QMenuBar;
 class QStackedWidget;
 class QToolBar;
 class QWidget;
@@ -102,6 +103,13 @@ public:
 	
 	/** Returns the application's localized name. */
 	QString appName() const;
+
+	/**
+	 * Returns the application menu bar. Main application windows place this
+	 * below the custom title bar; auxiliary preview windows use QMainWindow's
+	 * native menu bar.
+	 */
+	QMenuBar* menuBar() const;
 	
 	
 	/**
@@ -533,6 +541,7 @@ private:
 	QAction* recent_file_act[max_recent_files];
 	QAction* settings_act;
 	QAction* close_act;
+	QMenuBar* application_menu_bar = nullptr;
 	QLabel* status_label;
 	Toast* toast = nullptr;
 	
@@ -555,6 +564,7 @@ private:
 	bool maximized_before_fullscreen;
 	
 	bool homescreen_disabled;
+	bool menu_bar_scaled;
 
 	/// Number of active main windows. The last window shall not close on File > Close.
 	static int num_open_files;
@@ -575,6 +585,13 @@ inline
 MainWindowController* MainWindow::getController() const
 {
 	return controller;
+}
+
+
+inline
+QMenuBar* MainWindow::menuBar() const
+{
+	return application_menu_bar ? application_menu_bar : QMainWindow::menuBar();
 }
 
 
